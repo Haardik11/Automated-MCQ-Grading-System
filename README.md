@@ -70,7 +70,7 @@ Feel free to fork and contribute via pull requests.
 
 
 ---
-👨‍💻 Author
+## Author
 
 Developed by Haardik Mago  
 📧 Contact: haardikmago@gmail.com  
