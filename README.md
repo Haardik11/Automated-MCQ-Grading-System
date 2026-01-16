@@ -33,7 +33,7 @@ MCQ-AnswerSheet-Checker/
 ## Installation & Usage
 ### 1. Clone the Repository
 ```bash
-git clone To https://github.com/Haardik11/Automated-MCQ-Grading-System.git
+git clone  https://github.com/Haardik11/Automated-MCQ-Grading-System.git
 
 cd Automated-MCQ-Grading-System
 ```
