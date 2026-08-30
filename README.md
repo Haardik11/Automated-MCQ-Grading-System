@@ -33,8 +33,9 @@ MCQ-AnswerSheet-Checker/
 ## Installation & Usage
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/ParasJain19/Answer-Sheet-Checking-System.git
-cd MCQ-AnswerSheet-Checker
+git clone  https://github.com/Haardik11/Automated-MCQ-Grading-System.git
+
+cd Automated-MCQ-Grading-System
 ```
 
 ### 2. Install Dependencies
@@ -69,6 +70,9 @@ Feel free to fork and contribute via pull requests.
 
 
 ---
-### Author: PARAS JAIN
+## Author
 
-
+Developed by Haardik Mago  
+📧 Contact: haardikmago@gmail.com  
+🔗 GitHub: https://github.com/Haardik11  
+🔗 LinkedIn: https://www.linkedin.com/in/haardik-mago-637972157
