@@ -1,6 +1,7 @@
 import os
 import cv2
 import json
+import numpy as np
 import pandas as pd
 import tkinter as tk
 from tkinter import filedialog, StringVar, Label, Button, Radiobutton, messagebox
@@ -37,9 +38,18 @@ def preprocess_image(image):
 def classify_box(image, model):
     """Classify a single box using the CNN model."""
     preprocessed_image = preprocess_image(image)
-    prediction = model.predict(preprocessed_image)
+    prediction = model.predict(preprocessed_image, verbose=0)
     class_index = tf.argmax(prediction[0]).numpy()
     return class_labels[class_index]
+
+
+def classify_boxes_batch(boxes, model):
+    """Classify multiple boxes in a single predict() call instead of one per box."""
+    img_size = (128, 128)
+    batch = np.stack([cv2.resize(box, img_size) / 255.0 for box in boxes])
+    predictions = model.predict(batch, verbose=0)
+    class_indices = np.argmax(predictions, axis=1)
+    return [class_labels[i] for i in class_indices]
 
 
 def generate_model_metadata(image_path, metadata_folder):
@@ -67,12 +77,10 @@ def generate_model_metadata(image_path, metadata_folder):
         options = question["options"]
         question_data = {"options": options, "confirmed": None}
 
-        # Extract and classify each option
-        for option in options:
-            x, y, w, h = option
-            box = image[y:y + h, x:x + w]
-            prediction = classify_box(box, cnn_model)
-
+        # Extract and classify all of this question's options in one batch
+        boxes = [image[y:y + h, x:x + w] for (x, y, w, h) in options]
+        predictions = classify_boxes_batch(boxes, cnn_model)
+        for option, prediction in zip(options, predictions):
             # If this option is confirmed, store it
             if prediction == "confirmed":
                 question_data["confirmed"] = option
@@ -104,17 +112,28 @@ def grade_student_folder(student_folder_path, metadata_path, output_format, outp
     for filename in os.listdir(student_folder_path):
         if filename.lower().endswith((".png", ".jpg", ".jpeg")):
             student_path = os.path.join(student_folder_path, filename)
+            # Read the sheet once and classify every bubble on it in a single
+            # batched predict() call, instead of re-reading the image from
+            # disk and calling predict() separately for each of the (up to)
+            # 12 bubbles.
+            image = cv2.imread(student_path)
+            boxes = []
+            for question in question_metadata:
+                for option in question["options"]:
+                    x, y, w, h = option
+                    boxes.append(image[y:y + h, x:x + w])
+            predictions = classify_boxes_batch(boxes, cnn_model)
+
             score, matched = 0, []
+            pred_idx = 0
             for idx, question in enumerate(question_metadata):
                 options = question["options"]
                 confirmed = None
                 for option in options:
-                    x, y, w, h = option
-                    box = cv2.imread(student_path)[y:y + h, x:x + w]
-                    prediction = classify_box(box, cnn_model)
-                    if prediction == "confirmed":
+                    prediction = predictions[pred_idx]
+                    pred_idx += 1
+                    if prediction == "confirmed" and confirmed is None:
                         confirmed = option
-                        break
                 matched.append(model_confirmed_boxes[idx] == confirmed)
                 if model_confirmed_boxes[idx] == confirmed:
                     score += 1
