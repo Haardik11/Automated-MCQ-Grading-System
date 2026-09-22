@@ -7,6 +7,8 @@ import tkinter as tk
 from tkinter import filedialog, StringVar, Label, Button, Radiobutton, messagebox
 import tensorflow as tf
 
+from bubble_detection import detect_bubbles
+
 # Load the CNN model
 cnn_model_path = "cnn_model.h5" 
 cnn_model = tf.keras.models.load_model(cnn_model_path)
@@ -53,43 +55,34 @@ def classify_boxes_batch(boxes, model):
 
 
 def generate_model_metadata(image_path, metadata_folder):
-    """Generate metadata for the model answer sheet."""
+    """Generate metadata for the model answer sheet.
+
+    Bubble positions are detected per-image (see bubble_detection.py)
+    instead of assumed from fixed pixel coordinates, so metadata stores
+    which OPTION INDEX is correct per question rather than raw pixel boxes
+    -- the answer key's own pixel positions aren't assumed to transfer
+    directly to student sheets, which may be scanned slightly differently.
+    """
     image = cv2.imread(image_path)
     if image is None:
         raise ValueError(f"Unable to load image from {image_path}")
 
+    questions = detect_bubbles(image)
     metadata = {"questions": []}
-    confirmed_boxes = []
 
-    # Define coordinates for each question's options
-    question_metadata = [
-        # Question 1
-        {"options": [(209, 720, 63, 45), (550, 719, 63, 45), (929, 718, 62, 44)]},
-        # Question 2
-        {"options": [(209, 1235, 63, 44), (548, 1237, 64, 44), (929, 1235, 62, 45)]},
-        # Question 3
-        {"options": [(209, 1490, 63, 44), (550, 1490, 63, 45), (929, 1490, 63, 45)]},
-        # Question 4
-        {"options": [(209, 1870, 63, 44), (548, 1869, 63, 45), (929, 1870, 63, 45)]},
-    ]
-
-    for question_num, question in enumerate(question_metadata, start=1):
-        options = question["options"]
-        question_data = {"options": options, "confirmed": None}
-
-        # Extract and classify all of this question's options in one batch
+    for options in questions:
         boxes = [image[y:y + h, x:x + w] for (x, y, w, h) in options]
         predictions = classify_boxes_batch(boxes, cnn_model)
-        for option, prediction in zip(options, predictions):
-            # If this option is confirmed, store it
-            if prediction == "confirmed":
-                question_data["confirmed"] = option
 
-        # Append question data to metadata
-        if question_data["confirmed"] is None:
-            question_data["confirmed"] = options[0]  # Default to the first option
-        confirmed_boxes.append(question_data["confirmed"])
-        metadata["questions"].append(question_data)
+        correct_option = None
+        for idx, prediction in enumerate(predictions):
+            if prediction == "confirmed":
+                correct_option = idx
+
+        if correct_option is None:
+            correct_option = 0  # Default to the first option
+
+        metadata["questions"].append({"correct_option": correct_option})
 
     # Save metadata
     os.makedirs(metadata_folder, exist_ok=True)
@@ -106,42 +99,58 @@ def grade_student_folder(student_folder_path, metadata_path, output_format, outp
         model_metadata = json.load(f)
 
     results = []
-    question_metadata = model_metadata["questions"]
-    model_confirmed_boxes = [q["confirmed"] for q in question_metadata]
+    correct_options = [q["correct_option"] for q in model_metadata["questions"]]
+    n_questions = len(correct_options)
 
     for filename in os.listdir(student_folder_path):
         if filename.lower().endswith((".png", ".jpg", ".jpeg")):
             student_path = os.path.join(student_folder_path, filename)
+            image = cv2.imread(student_path)
+
+            # Detect this sheet's own bubble positions instead of assuming
+            # the answer key's pixel coordinates apply to every scan; a
+            # sheet whose bubbles can't be confidently located is flagged
+            # for manual review instead of silently graded against the
+            # wrong region.
+            try:
+                questions = detect_bubbles(image, n_questions=n_questions)
+            except ValueError as e:
+                results.append({
+                    "Student": filename,
+                    "Score": None,
+                    "Out of": n_questions,
+                    "Percentage": None,
+                    "Error": f"Bubble detection failed: {e}",
+                })
+                continue
+
             # Read the sheet once and classify every bubble on it in a single
             # batched predict() call, instead of re-reading the image from
             # disk and calling predict() separately for each of the (up to)
             # 12 bubbles.
-            image = cv2.imread(student_path)
             boxes = []
-            for question in question_metadata:
-                for option in question["options"]:
-                    x, y, w, h = option
+            for options in questions:
+                for (x, y, w, h) in options:
                     boxes.append(image[y:y + h, x:x + w])
             predictions = classify_boxes_batch(boxes, cnn_model)
 
-            score, matched = 0, []
+            score = 0
             pred_idx = 0
-            for idx, question in enumerate(question_metadata):
-                options = question["options"]
-                confirmed = None
-                for option in options:
+            for qi in range(n_questions):
+                confirmed_option = None
+                for oi in range(len(questions[qi])):
                     prediction = predictions[pred_idx]
                     pred_idx += 1
-                    if prediction == "confirmed" and confirmed is None:
-                        confirmed = option
-                matched.append(model_confirmed_boxes[idx] == confirmed)
-                if model_confirmed_boxes[idx] == confirmed:
+                    if prediction == "confirmed" and confirmed_option is None:
+                        confirmed_option = oi
+                if confirmed_option == correct_options[qi]:
                     score += 1
             results.append({
                 "Student": filename,
                 "Score": score,
-                "Out of": len(question_metadata),
-                "Percentage": (score / len(question_metadata)) * 100
+                "Out of": n_questions,
+                "Percentage": (score / n_questions) * 100,
+                "Error": None,
             })
 
     # Save results
